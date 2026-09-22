@@ -1,5 +1,4 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import requests
 import plotly.graph_objects as go
@@ -7,15 +6,6 @@ from datetime import datetime
 import pyupbit
 
 st.set_page_config(page_title="비트코인 매수/매도 타이밍 AI 분석기", layout="wide")
-
-@st.cache_data(ttl=3600)
-def get_crypto_data():
-    """야후 파이낸스에서 비트코인 일봉 데이터를 가져옵니다."""
-    try:
-        btc = yf.download("BTC-USD", period="6mo", interval="1d", progress=False)
-        return btc
-    except Exception as e:
-        return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
@@ -27,24 +17,32 @@ def get_fear_and_greed():
     except:
         return 50, "Unknown"
 
-def calculate_rsi(data, periods=14):
-    """RSI(상대강도지수)를 계산합니다."""
-    if isinstance(data.columns, pd.MultiIndex):
-        close_series = data['Close'].iloc[:, 0]
-    else:
-        close_series = data['Close']
-        
-    close_delta = close_series.diff()
-    up = close_delta.clip(lower=0)
-    down = -1 * close_delta.clip(upper=0)
-    ma_up = up.ewm(com=periods - 1, adjust=True, min_periods=periods).mean()
-    ma_down = down.ewm(com=periods - 1, adjust=True, min_periods=periods).mean()
+def calculate_indicators(df):
+    """선택된 데이터프레임에 보조지표(RSI, MACD, 볼린저밴드)를 계산합니다."""
+    # RSI (14)
+    delta = df['close'].diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ma_up = up.ewm(com=13, adjust=True, min_periods=14).mean()
+    ma_down = down.ewm(com=13, adjust=True, min_periods=14).mean()
     rsi = ma_up / ma_down
-    return 100 - (100 / (1 + rsi))
+    df['RSI'] = 100 - (100 / (1 + rsi))
+    
+    # EMA 20, 50
+    df['EMA20'] = df['close'].ewm(span=20, adjust=False).mean()
+    df['EMA50'] = df['close'].ewm(span=50, adjust=False).mean()
+    
+    # 볼린저 밴드 (20, 2)
+    df['BB_MA20'] = df['close'].rolling(window=20).mean()
+    df['BB_STD'] = df['close'].rolling(window=20).std()
+    df['BB_Upper'] = df['BB_MA20'] + (df['BB_STD'] * 2)
+    df['BB_Lower'] = df['BB_MA20'] - (df['BB_STD'] * 2)
+    
+    return df
 
 @st.fragment(run_every="1s")
 def render_realtime_orderbook():
-    """1초마다 자동으로 실행되어 호가창과 현재가를 실시간 업데이트하는 조각"""
+    """1초마다 실행되어 호가창과 현재가를 실시간 업데이트하는 조각"""
     try:
         krw_price = pyupbit.get_current_price("KRW-BTC")
         orderbooks = pyupbit.get_orderbook("KRW-BTC")
@@ -58,7 +56,6 @@ def render_realtime_orderbook():
         units = orderbooks['orderbook_units']
         st.markdown("**(단위: KRW / BTC)**")
         
-        # 매도 호가 (Ask) - 역순
         for unit in reversed(units[:10]):
             ask_price = unit['ask_price']
             ask_size = unit['ask_size']
@@ -69,7 +66,6 @@ def render_realtime_orderbook():
         
         st.markdown("<hr style='margin: 10px 0; border-color: gray;'>", unsafe_allow_html=True)
         
-        # 매수 호가 (Bid) - 정순
         for unit in units[:10]:
             bid_price = unit['bid_price']
             bid_size = unit['bid_size']
@@ -80,129 +76,142 @@ def render_realtime_orderbook():
     else:
         st.warning("호가창 데이터를 불러올 수 없습니다.")
         
-    st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"호가창 업데이트: {datetime.now().strftime('%H:%M:%S')}")
+
+@st.fragment(run_every="5s")
+def render_realtime_chart(interval_val, interval_name):
+    """5초마다 실행되어 선택한 타임프레임의 차트와 시그널을 업데이트하는 조각"""
+    df_chart = pyupbit.get_ohlcv("KRW-BTC", interval=interval_val, count=100)
+    
+    if df_chart is not None and not df_chart.empty:
+        df_chart = calculate_indicators(df_chart)
+        
+        current_price = df_chart['close'].iloc[-1]
+        current_rsi = df_chart['RSI'].iloc[-1]
+        current_ema20 = df_chart['EMA20'].iloc[-1]
+        bb_upper = df_chart['BB_Upper'].iloc[-1]
+        bb_lower = df_chart['BB_Lower'].iloc[-1]
+        
+        # --- AI 투자 시그널 분석 ---
+        st.header(f"🤖 AI 투자 시그널 ({interval_name} 기준)")
+        
+        signal = "관망 (Hold)"
+        color = "gray"
+        reason = []
+        
+        # 정밀 분석 로직
+        if current_rsi > 70 or current_price >= bb_upper:
+            signal = "🚨 강력 매도 / 차익 실현 (Sell)"
+            color = "#ff4b4b" 
+            if current_rsi > 70:
+                reason.append(f"RSI가 {current_rsi:.1f}로 '과매수' 구간에 진입했습니다.")
+            if current_price >= bb_upper:
+                reason.append("가격이 볼린저 밴드 상단을 돌파하여 단기 조정 확률이 매우 높습니다.")
+            reason.append("추격 매수를 삼가고 보유 물량의 분할 매도를 권장합니다.")
+            
+        elif current_rsi < 30 or current_price <= bb_lower:
+            signal = "💰 강력 매수 기회 (Buy)"
+            color = "#00cc96" 
+            if current_rsi < 30:
+                reason.append(f"RSI가 {current_rsi:.1f}로 '과매도' 구간에 진입했습니다.")
+            if current_price <= bb_lower:
+                reason.append("가격이 볼린저 밴드 하단을 이탈하여 기술적 반등(Technical Rebound)이 예상됩니다.")
+            reason.append("저점 분할 매수를 적극 고려해볼 수 있는 타점입니다.")
+            
+        elif current_price > current_ema20:
+            signal = "📈 상승 추세 유지 - 분할 매수 / 홀딩"
+            color = "#ffa15a" 
+            reason.append("가격이 20일선(EMA) 위에서 안정적으로 지지받으며 상승 채널을 유지 중입니다.")
+            reason.append(f"현재 RSI는 {current_rsi:.1f}로 과열되지 않은 상태입니다.")
+            
+        else:
+            signal = "📉 하락/횡보 추세 - 관망"
+            color = "#636efa" 
+            reason.append("가격이 20일선(EMA) 아래에 머물러 있어 매도 압력이 더 강합니다.")
+            reason.append("확실한 추세 전환(20일선 돌파)이 나올 때까지 현금을 관망하는 것이 좋습니다.")
+            
+        st.markdown(f"<h2 style='color: {color};'>{signal}</h2>", unsafe_allow_html=True)
+        
+        st.subheader("💡 판단 근거 상세")
+        for r in reason:
+            st.write(f"- {r}")
+
+        # --- 차트 그리기 ---
+        st.subheader(f"📊 비트코인 {interval_name} 차트")
+        fig = go.Figure()
+        
+        # 캔들스틱 (한국형 적색/청색)
+        fig.add_trace(go.Candlestick(x=df_chart.index,
+                    open=df_chart['open'], high=df_chart['high'],
+                    low=df_chart['low'], close=df_chart['close'], 
+                    increasing_line_color='#ff4b4b', decreasing_line_color='#636efa',
+                    name='KRW-BTC'))
+                    
+        # 이동평균선 및 볼린저 밴드
+        fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['EMA20'], line=dict(color='orange', width=1.5), name='EMA 20'))
+        fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['BB_Upper'], line=dict(color='rgba(255,255,255,0.2)', width=1, dash='dot'), name='BB 상단'))
+        fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['BB_Lower'], line=dict(color='rgba(255,255,255,0.2)', width=1, dash='dot'), name='BB 하단', fill='tonexty', fillcolor='rgba(255,255,255,0.05)'))
+        
+        fig.update_layout(
+            xaxis_rangeslider_visible=False, 
+            height=450, 
+            template="plotly_dark", 
+            margin=dict(l=0, r=0, t=30, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("차트 데이터를 불러올 수 없습니다.")
 
 def main():
-    st.title("🚀 실시간 비트코인 타이밍 & 자산 관리 앱")
-    st.markdown("업비트(Upbit) API를 활용해 실시간 시장 분석 및 내 자산을 확인합니다.")
+    st.title("🚀 실시간 비트코인 정밀 타이밍 & 자산 앱")
+    st.markdown("사용자가 선택한 타임프레임(분/시간/일/주)에 맞춰 AI가 **맞춤형 투자 시그널**을 정밀 분석합니다.")
     
-    # ---------------- 사이드바 (API 키 설정) ----------------
+    # ---------------- 사이드바 (API 키 및 설정) ----------------
     with st.sidebar:
-        st.header("🔐 업비트 계정 연동 (선택사항)")
-        st.write("발급받은 API 키를 입력하면 내 잔고를 실시간으로 확인할 수 있습니다. (안전을 위해 서버에 저장되지 않습니다.)")
-        # 사용자님이 알려준 Access Key를 기본값으로 세팅
-        access_key = st.text_input("Access Key", value="Pqb2kah8kT1hrQXYF6ELxg4Wezt5tXaeRwlLx53N", type="password")
-        secret_key = st.text_input("Secret Key", type="password", help="업비트에서 API 발급 시 한 번만 보여주는 비밀키입니다.")
+        st.header("⚙️ 차트 설정")
+        interval_options = {
+            "1분봉": "minute1",
+            "3분봉": "minute3",
+            "15분봉": "minute15",
+            "1시간봉": "minute60",
+            "4시간봉": "minute240",
+            "일봉": "day",
+            "주봉": "week",
+            "월봉": "month"
+        }
+        selected_interval_name = st.selectbox("분석할 타임프레임 선택", list(interval_options.keys()), index=2) # 기본 15분봉
+        selected_interval_val = interval_options[selected_interval_name]
         
-        upbit_client = None
+        st.divider()
+        
+        st.header("🔐 내 계좌 연동")
+        access_key = st.text_input("Access Key", value="Pqb2kah8kT1hrQXYF6ELxg4Wezt5tXaeRwlLx53N", type="password")
+        secret_key = st.text_input("Secret Key", type="password")
+        
         if access_key and secret_key:
             try:
                 upbit_client = pyupbit.Upbit(access_key, secret_key)
                 krw_balance = upbit_client.get_balance("KRW")
                 btc_balance = upbit_client.get_balance("KRW-BTC")
                 if krw_balance is not None:
-                    st.success("✅ 업비트 계정 연동 성공!")
-                    st.metric("보유 KRW (원화)", f"₩{krw_balance:,.0f}")
-                    st.metric("보유 BTC (비트코인)", f"{btc_balance:.6f} BTC")
-                else:
-                    st.error("API 키가 올바르지 않거나 권한이 없습니다.")
-            except Exception as e:
-                st.error("연동 실패. Secret Key를 확인해주세요.")
-
-    # ---------------- 메인 로직 ----------------
-    with st.spinner('초기 데이터를 불러오는 중입니다...'):
-        df = get_crypto_data()
+                    st.success("✅ 연동 완료")
+                    st.metric("보유 원화", f"₩{krw_balance:,.0f}")
+                    st.metric("보유 BTC", f"{btc_balance:.6f} BTC")
+            except:
+                pass
+                
+        # 거시적 지표 (공포탐욕지수)
+        st.divider()
         fng_value, fng_class = get_fear_and_greed()
-    
-    if df.empty:
-        st.error("데이터를 불러오지 못했습니다.")
-        return
+        st.metric("시장 공포/탐욕 지수 (글로벌)", f"{fng_value} ({fng_class})")
 
-    if isinstance(df.columns, pd.MultiIndex):
-        close_series = df['Close'].iloc[:, 0]
-        open_series = df['Open'].iloc[:, 0]
-        high_series = df['High'].iloc[:, 0]
-        low_series = df['Low'].iloc[:, 0]
-    else:
-        close_series = df['Close']
-        open_series = df['Open']
-        high_series = df['High']
-        low_series = df['Low']
-
-    df['EMA20'] = close_series.ewm(span=20, adjust=False).mean()
-    df['EMA50'] = close_series.ewm(span=50, adjust=False).mean()
-    df['RSI'] = calculate_rsi(df)
-    
-    usd_price = float(close_series.iloc[-1])
-    current_rsi = float(df['RSI'].iloc[-1])
-    current_ema20 = float(df['EMA20'].iloc[-1])
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("현재 비트코인 (USD 기준)", f"${usd_price:,.2f}")
-    col2.metric("RSI (14일)", f"{current_rsi:.2f}")
-    col3.metric("공포/탐욕 지수", f"{fng_value} ({fng_class})")
-    
-    left_col, right_col = st.columns([2, 1])
+    # ---------------- 메인 레이아웃 ----------------
+    left_col, right_col = st.columns([2.5, 1])
     
     with left_col:
-        st.header("🤖 AI 투자 시그널")
-        
-        signal = "관망 (Hold)"
-        color = "gray"
-        reason = []
-        
-        if current_rsi > 70 and fng_value >= 75:
-            signal = "🚨 강력 매도 / 차익 실현 (Sell)"
-            color = "#ff4b4b" 
-            reason.append("RSI가 70을 초과한 '과매수' 상태입니다.")
-            reason.append("시장이 '극단적 탐욕' 상태이므로 단기 조정 가능성이 높습니다.")
-        elif current_rsi < 30 and fng_value <= 25:
-            signal = "💰 강력 매수 기회 (Buy)"
-            color = "#00cc96" 
-            reason.append("RSI가 30 미만인 '과매도' 상태입니다.")
-            reason.append("시장이 '극단적 공포' 상태로 저점 매수 기회일 수 있습니다.")
-        elif usd_price > current_ema20:
-            signal = "📈 단기 상승 추세 - 분할 매수 / 홀딩"
-            color = "#ffa15a" 
-            reason.append("가격이 20일 이동평균선 위에 위치해 단기 상승 추세가 유지되고 있습니다.")
-            if current_rsi > 60:
-                reason.append("다만 RSI가 높은 편이므로 적극적인 추격 매수보다는 홀딩을 권장합니다.")
-            else:
-                reason.append("분할 매수를 고려해볼 수 있는 구간입니다.")
-        else:
-            signal = "📉 단기 하락 추세 - 관망"
-            color = "#636efa" 
-            reason.append("가격이 20일 이동평균선 아래에 있어 하락 채널에 있습니다. 관망하는 것이 좋습니다.")
-            
-        st.markdown(f"<h2 style='color: {color};'>{signal}</h2>", unsafe_allow_html=True)
-        
-        st.subheader("💡 판단 근거")
-        for r in reason:
-            st.write(f"- {r}")
-
-        @st.fragment(run_every="5s")
-        def render_realtime_chart():
-            st.subheader("📊 비트코인 15분봉 차트 (업비트 KRW 기준)")
-            # 업비트에서 최근 100개의 15분봉 데이터를 실시간으로 가져옴
-            df_chart = pyupbit.get_ohlcv("KRW-BTC", interval="minute15", count=100)
-            if df_chart is not None and not df_chart.empty:
-                df_chart['EMA20'] = df_chart['close'].ewm(span=20, adjust=False).mean()
-                df_chart['EMA50'] = df_chart['close'].ewm(span=50, adjust=False).mean()
-                
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(x=df_chart.index,
-                            open=df_chart['open'], high=df_chart['high'],
-                            low=df_chart['low'], close=df_chart['close'], 
-                            increasing_line_color='#ff4b4b', decreasing_line_color='#636efa',
-                            name='KRW-BTC'))
-                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['EMA20'], line=dict(color='orange', width=1.5), name='EMA 20'))
-                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['EMA50'], line=dict(color='blue', width=1.5), name='EMA 50'))
-                fig.update_layout(xaxis_rangeslider_visible=False, height=400, template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0))
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("차트 데이터를 불러올 수 없습니다.")
-                
-        render_realtime_chart()
+        # 선택한 타임프레임에 맞춰 실시간 차트와 시그널을 분석하는 조각 실행
+        render_realtime_chart(selected_interval_val, selected_interval_name)
 
     with right_col:
         st.header("📋 실시간 호가창")
