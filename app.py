@@ -159,11 +159,8 @@ def render_realtime_chart(interval_val, interval_name):
     else:
         st.warning("차트 데이터를 불러올 수 없습니다.")
 
-def main():
-    st.title("🚀 실시간 비트코인 정밀 타이밍 & 자산 앱")
-    st.markdown("사용자가 선택한 타임프레임(분/시간/일/주)에 맞춰 AI가 **맞춤형 투자 시그널**을 정밀 분석합니다.")
-    
-    # 상단 메트릭스 복구 (과거 레이아웃 동일)
+@st.fragment(run_every="1s")
+def render_top_metrics():
     krw_price = pyupbit.get_current_price("KRW-BTC")
     fng_value, fng_class = get_fear_and_greed()
     
@@ -175,6 +172,13 @@ def main():
     weekdays = ["월", "화", "수", "목", "금", "토", "일"]
     formatted_time = now.strftime(f"%Y-%m-%d ({weekdays[now.weekday()]}) %H:%M:%S")
     col3.metric("최신 업데이트", formatted_time)
+
+def main():
+    st.title("🚀 실시간 비트코인 정밀 타이밍 & 자산 앱")
+    st.markdown("사용자가 선택한 타임프레임(분/시간/일/주)에 맞춰 AI가 **맞춤형 투자 시그널**을 정밀 분석합니다.")
+    
+    # 상단 메트릭스 실시간 업데이트
+    render_top_metrics()
     
     st.markdown("---")
     
