@@ -162,6 +162,49 @@ def render_realtime_chart(interval_val, interval_name):
     else:
         st.warning("차트 데이터를 불러올 수 없습니다.")
 
+@st.fragment(run_every="2s")
+def render_whale_tracker():
+    st.subheader("🐳 실시간 수급 및 고래 추적기 (업비트 최근 체결 기준)")
+    try:
+        res = requests.get("https://api.upbit.com/v1/trades/ticks?market=KRW-BTC&count=200")
+        ticks = res.json()
+        
+        buy_vol = sum([t['trade_volume'] for t in ticks if t['ask_bid'] == 'BID'])
+        sell_vol = sum([t['trade_volume'] for t in ticks if t['ask_bid'] == 'ASK'])
+        total_vol = buy_vol + sell_vol
+        buy_pct = (buy_vol / total_vol) * 100 if total_vol > 0 else 50
+        sell_pct = 100 - buy_pct
+        
+        html_bar = f"""
+        <div style="width:100%; height:24px; background-color:rgba(255, 75, 75, 0.2); border-radius:5px; display:flex; overflow:hidden; border: 1px solid #444;">
+            <div style="width:{buy_pct}%; height:100%; background-color:rgba(0, 204, 150, 0.6); display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:bold; transition: width 0.5s;">매수 {buy_pct:.1f}%</div>
+            <div style="width:{sell_pct}%; height:100%; background-color:rgba(255, 75, 75, 0.6); display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:bold; transition: width 0.5s;">매도 {sell_pct:.1f}%</div>
+        </div>
+        """
+        st.markdown(html_bar, unsafe_allow_html=True)
+        
+        st.markdown("<br>**🚨 실시간 대량 체결 (5천만 원 이상)**", unsafe_allow_html=True)
+        
+        whale_trades = [t for t in ticks if (t['trade_price'] * t['trade_volume']) >= 50000000]
+        
+        if not whale_trades:
+            st.info("최근 대량 체결 내역이 없습니다.")
+        else:
+            for w in whale_trades[:5]: # 상위 5개만
+                trade_type = "매수(BID)" if w['ask_bid'] == "BID" else "매도(ASK)"
+                color = "#00cc96" if w['ask_bid'] == "BID" else "#ff4b4b"
+                amount_krw = w['trade_price'] * w['trade_volume']
+                
+                from datetime import timezone, timedelta, datetime
+                KST = timezone(timedelta(hours=9))
+                dt_kst = datetime.fromtimestamp(w['timestamp']/1000.0, KST)
+                time_str = dt_kst.strftime('%H:%M:%S')
+                
+                st.markdown(f"[{time_str}] <span style='color:{color}; font-weight:bold;'>{trade_type}</span> : 약 **{amount_krw/100000000:.1f}억 원** ({w['trade_volume']:.2f} BTC)", unsafe_allow_html=True)
+                
+    except Exception as e:
+        st.error("수급 데이터를 불러오지 못했습니다.")
+
 @st.fragment(run_every="1s")
 def render_top_metrics():
     krw_price = pyupbit.get_current_price("KRW-BTC")
@@ -231,6 +274,10 @@ def main():
         
         # 선택한 타임프레임에 맞춰 실시간 차트와 시그널을 분석하는 조각 실행
         render_realtime_chart(selected_interval_val, selected_interval_name)
+        
+        st.markdown("<br><hr>", unsafe_allow_html=True)
+        # 고래 추적기 실행
+        render_whale_tracker()
 
     with right_col:
         st.header("📋 실시간 호가창")
