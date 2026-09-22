@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import plotly.graph_objects as go
 from datetime import datetime
+import pyupbit
 
 st.set_page_config(page_title="비트코인 매수/매도 타이밍 AI 분석기", layout="wide")
 
@@ -26,27 +27,6 @@ def get_fear_and_greed():
     except:
         return 50, "Unknown"
 
-def get_upbit_ticker():
-    """업비트에서 실시간 원화(KRW) 비트코인 가격을 가져옵니다."""
-    try:
-        url = "https://api.upbit.com/v1/ticker?markets=KRW-BTC"
-        headers = {"accept": "application/json"}
-        response = requests.get(url, headers=headers)
-        data = response.json()[0]
-        return data['trade_price'], data['signed_change_rate']
-    except:
-        return 0, 0
-
-def get_upbit_orderbook():
-    """업비트에서 실시간 매도/매수 호가창(Orderbook) 데이터를 가져옵니다."""
-    try:
-        url = "https://api.upbit.com/v1/orderbook?markets=KRW-BTC"
-        headers = {"accept": "application/json"}
-        response = requests.get(url, headers=headers)
-        return response.json()[0]['orderbook_units']
-    except:
-        return []
-
 def calculate_rsi(data, periods=14):
     """RSI(상대강도지수)를 계산합니다."""
     if isinstance(data.columns, pd.MultiIndex):
@@ -64,19 +44,22 @@ def calculate_rsi(data, periods=14):
 
 @st.fragment(run_every="1s")
 def render_realtime_orderbook():
-    """1초마다 자동으로 실행되어 호가창을 실시간 업데이트하는 조각(Fragment)"""
-    # 업비트 실시간 가격 및 호가 데이터 호출
-    krw_price, change_rate = get_upbit_ticker()
-    orderbook = get_upbit_orderbook()
+    """1초마다 자동으로 실행되어 호가창과 현재가를 실시간 업데이트하는 조각"""
+    try:
+        krw_price = pyupbit.get_current_price("KRW-BTC")
+        orderbooks = pyupbit.get_orderbook("KRW-BTC")
+    except:
+        krw_price = 0
+        orderbooks = None
+        
+    st.markdown(f"### ⚡ 업비트 현재가: <span style='color:#00cc96;'>₩{krw_price:,.0f}</span>", unsafe_allow_html=True)
     
-    # 상단에 현재가 다시 표시 (실시간 강조)
-    st.markdown(f"### ⚡ 현재가: <span style='color:#00cc96;'>₩{krw_price:,.0f}</span> ({change_rate*100:.2f}%)", unsafe_allow_html=True)
-    
-    if orderbook:
+    if orderbooks and 'orderbook_units' in orderbooks:
+        units = orderbooks['orderbook_units']
         st.markdown("**(단위: KRW / BTC)**")
         
-        # 매도 호가 (Ask) - 높은 가격이 위로
-        for unit in reversed(orderbook[:10]):
+        # 매도 호가 (Ask) - 역순
+        for unit in reversed(units[:10]):
             ask_price = unit['ask_price']
             ask_size = unit['ask_size']
             st.markdown(f"<div style='background-color:rgba(255, 75, 75, 0.2); padding:5px; border-radius:5px; margin-bottom:2px; display:flex; justify-content:space-between;'>"
@@ -86,8 +69,8 @@ def render_realtime_orderbook():
         
         st.markdown("<hr style='margin: 10px 0; border-color: gray;'>", unsafe_allow_html=True)
         
-        # 매수 호가 (Bid) - 높은 가격이 위로
-        for unit in orderbook[:10]:
+        # 매수 호가 (Bid) - 정순
+        for unit in units[:10]:
             bid_price = unit['bid_price']
             bid_size = unit['bid_size']
             st.markdown(f"<div style='background-color:rgba(0, 204, 150, 0.2); padding:5px; border-radius:5px; margin-bottom:2px; display:flex; justify-content:space-between;'>"
@@ -100,9 +83,33 @@ def render_realtime_orderbook():
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')}")
 
 def main():
-    st.title("🚀 실시간 비트코인 원화(KRW) 매수/매도 타이밍 앱")
-    st.markdown("`Upbit` 실시간 원화 가격 및 호가창, `Yahoo Finance` 차트, `Alternative.me` 지수를 종합 분석합니다.")
+    st.title("🚀 실시간 비트코인 타이밍 & 자산 관리 앱")
+    st.markdown("업비트(Upbit) API를 활용해 실시간 시장 분석 및 내 자산을 확인합니다.")
     
+    # ---------------- 사이드바 (API 키 설정) ----------------
+    with st.sidebar:
+        st.header("🔐 업비트 계정 연동 (선택사항)")
+        st.write("발급받은 API 키를 입력하면 내 잔고를 실시간으로 확인할 수 있습니다. (안전을 위해 서버에 저장되지 않습니다.)")
+        # 사용자님이 알려준 Access Key를 기본값으로 세팅
+        access_key = st.text_input("Access Key", value="Pqb2kah8kT1hrQXYF6ELxg4Wezt5tXaeRwlLx53N", type="password")
+        secret_key = st.text_input("Secret Key", type="password", help="업비트에서 API 발급 시 한 번만 보여주는 비밀키입니다.")
+        
+        upbit_client = None
+        if access_key and secret_key:
+            try:
+                upbit_client = pyupbit.Upbit(access_key, secret_key)
+                krw_balance = upbit_client.get_balance("KRW")
+                btc_balance = upbit_client.get_balance("KRW-BTC")
+                if krw_balance is not None:
+                    st.success("✅ 업비트 계정 연동 성공!")
+                    st.metric("보유 KRW (원화)", f"₩{krw_balance:,.0f}")
+                    st.metric("보유 BTC (비트코인)", f"{btc_balance:.6f} BTC")
+                else:
+                    st.error("API 키가 올바르지 않거나 권한이 없습니다.")
+            except Exception as e:
+                st.error("연동 실패. Secret Key를 확인해주세요.")
+
+    # ---------------- 메인 로직 ----------------
     with st.spinner('초기 데이터를 불러오는 중입니다...'):
         df = get_crypto_data()
         fng_value, fng_class = get_fear_and_greed()
@@ -130,13 +137,11 @@ def main():
     current_rsi = float(df['RSI'].iloc[-1])
     current_ema20 = float(df['EMA20'].iloc[-1])
     
-    # ---------------- UI 구성 ----------------
     col1, col2, col3 = st.columns(3)
     col1.metric("현재 비트코인 (USD 기준)", f"${usd_price:,.2f}")
     col2.metric("RSI (14일)", f"{current_rsi:.2f}")
     col3.metric("공포/탐욕 지수", f"{fng_value} ({fng_class})")
     
-    # ---------------- 2단 레이아웃 (시그널 & 호가창) ----------------
     left_col, right_col = st.columns([2, 1])
     
     with left_col:
@@ -189,7 +194,6 @@ def main():
 
     with right_col:
         st.header("📋 실시간 호가창")
-        # 여기서 1초마다 자동 새로고침되는 함수를 호출합니다!
         render_realtime_orderbook()
 
 if __name__ == "__main__":
