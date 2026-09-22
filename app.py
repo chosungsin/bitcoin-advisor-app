@@ -76,7 +76,10 @@ def render_realtime_orderbook():
     else:
         st.warning("호가창 데이터를 불러올 수 없습니다.")
         
-    st.caption(f"호가창 업데이트: {datetime.now().strftime('%H:%M:%S')}")
+    from datetime import timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+    st.caption(f"호가창 업데이트: {now.strftime('%H:%M:%S')}")
 
 @st.fragment(run_every="5s")
 def render_realtime_chart(interval_val, interval_name):
