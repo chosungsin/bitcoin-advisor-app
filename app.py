@@ -179,7 +179,9 @@ def main():
         fig = go.Figure()
         fig.add_trace(go.Candlestick(x=df.index,
                     open=open_series, high=high_series,
-                    low=low_series, close=close_series, name='BTC/USD'))
+                    low=low_series, close=close_series, 
+                    increasing_line_color='#ff4b4b', decreasing_line_color='#636efa',
+                    name='BTC/USD'))
         fig.add_trace(go.Scatter(x=df.index, y=df['EMA20'], line=dict(color='orange', width=1.5), name='EMA 20 (단기)'))
         fig.add_trace(go.Scatter(x=df.index, y=df['EMA50'], line=dict(color='blue', width=1.5), name='EMA 50 (중기)'))
         fig.update_layout(xaxis_rangeslider_visible=False, height=400, template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0))
