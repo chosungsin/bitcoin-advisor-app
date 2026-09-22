@@ -99,7 +99,6 @@ def render_realtime_chart(interval_val, interval_name):
         color = "gray"
         reason = []
         
-        # 정밀 분석 로직
         if current_rsi > 70 or current_price >= bb_upper:
             signal = "🚨 강력 매도 / 차익 실현 (Sell)"
             color = "#ff4b4b" 
@@ -108,22 +107,19 @@ def render_realtime_chart(interval_val, interval_name):
             if current_price >= bb_upper:
                 reason.append("가격이 볼린저 밴드 상단을 돌파하여 단기 조정 확률이 매우 높습니다.")
             reason.append("추격 매수를 삼가고 보유 물량의 분할 매도를 권장합니다.")
-            
         elif current_rsi < 30 or current_price <= bb_lower:
             signal = "💰 강력 매수 기회 (Buy)"
             color = "#00cc96" 
             if current_rsi < 30:
                 reason.append(f"RSI가 {current_rsi:.1f}로 '과매도' 구간에 진입했습니다.")
             if current_price <= bb_lower:
-                reason.append("가격이 볼린저 밴드 하단을 이탈하여 기술적 반등(Technical Rebound)이 예상됩니다.")
+                reason.append("가격이 볼린저 밴드 하단을 이탈하여 기술적 반등이 예상됩니다.")
             reason.append("저점 분할 매수를 적극 고려해볼 수 있는 타점입니다.")
-            
         elif current_price > current_ema20:
             signal = "📈 상승 추세 유지 - 분할 매수 / 홀딩"
             color = "#ffa15a" 
             reason.append("가격이 20일선(EMA) 위에서 안정적으로 지지받으며 상승 채널을 유지 중입니다.")
             reason.append(f"현재 RSI는 {current_rsi:.1f}로 과열되지 않은 상태입니다.")
-            
         else:
             signal = "📉 하락/횡보 추세 - 관망"
             color = "#636efa" 
@@ -137,10 +133,10 @@ def render_realtime_chart(interval_val, interval_name):
             st.write(f"- {r}")
 
         # --- 차트 그리기 ---
-        st.subheader(f"📊 비트코인 {interval_name} 차트")
+        st.subheader(f"📊 비트코인 차트")
         fig = go.Figure()
         
-        # 캔들스틱 (한국형 적색/청색)
+        # 캔들스틱
         fig.add_trace(go.Candlestick(x=df_chart.index,
                     open=df_chart['open'], high=df_chart['high'],
                     low=df_chart['low'], close=df_chart['close'], 
@@ -167,24 +163,19 @@ def main():
     st.title("🚀 실시간 비트코인 정밀 타이밍 & 자산 앱")
     st.markdown("사용자가 선택한 타임프레임(분/시간/일/주)에 맞춰 AI가 **맞춤형 투자 시그널**을 정밀 분석합니다.")
     
-    # ---------------- 사이드바 (API 키 및 설정) ----------------
+    # 상단 메트릭스 복구 (과거 레이아웃 동일)
+    krw_price = pyupbit.get_current_price("KRW-BTC")
+    fng_value, fng_class = get_fear_and_greed()
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("현재 비트코인 (KRW 기준)", f"₩{krw_price:,.0f}" if krw_price else "로딩중...")
+    col2.metric("공포/탐욕 지수", f"{fng_value} ({fng_class})")
+    col3.metric("최신 업데이트", datetime.now().strftime("%H:%M:%S"))
+    
+    st.markdown("---")
+    
+    # 사이드바 (내 계좌 연동만 유지)
     with st.sidebar:
-        st.header("⚙️ 차트 설정")
-        interval_options = {
-            "1분봉": "minute1",
-            "3분봉": "minute3",
-            "15분봉": "minute15",
-            "1시간봉": "minute60",
-            "4시간봉": "minute240",
-            "일봉": "day",
-            "주봉": "week",
-            "월봉": "month"
-        }
-        selected_interval_name = st.selectbox("분석할 타임프레임 선택", list(interval_options.keys()), index=4) # 기본 4시간봉 (스윙)
-        selected_interval_val = interval_options[selected_interval_name]
-        
-        st.divider()
-        
         st.header("🔐 내 계좌 연동")
         access_key = st.text_input("Access Key", value="Pqb2kah8kT1hrQXYF6ELxg4Wezt5tXaeRwlLx53N", type="password")
         secret_key = st.text_input("Secret Key", type="password")
@@ -201,15 +192,30 @@ def main():
             except:
                 pass
                 
-        # 거시적 지표 (공포탐욕지수)
-        st.divider()
-        fng_value, fng_class = get_fear_and_greed()
-        st.metric("시장 공포/탐욕 지수 (글로벌)", f"{fng_value} ({fng_class})")
-
     # ---------------- 메인 레이아웃 ----------------
     left_col, right_col = st.columns([2.5, 1])
     
     with left_col:
+        # 타임프레임 선택 라디오 버튼 (그래프와 겹치지 않게 메인 뷰 상단에 가로로 배치)
+        interval_options = {
+            "1분봉": "minute1",
+            "3분봉": "minute3",
+            "15분봉": "minute15",
+            "1시간봉": "minute60",
+            "4시간봉": "minute240",
+            "일봉": "day",
+            "주봉": "week",
+            "월봉": "month"
+        }
+        
+        selected_interval_name = st.radio(
+            "⏱️ 타임프레임 선택",
+            list(interval_options.keys()),
+            index=4,
+            horizontal=True
+        )
+        selected_interval_val = interval_options[selected_interval_name]
+        
         # 선택한 타임프레임에 맞춰 실시간 차트와 시그널을 분석하는 조각 실행
         render_realtime_chart(selected_interval_val, selected_interval_name)
 
