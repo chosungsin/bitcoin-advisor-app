@@ -168,7 +168,9 @@ def render_top_metrics():
     col1.metric("현재 비트코인 (KRW 기준)", f"₩{krw_price:,.0f}" if krw_price else "로딩중...")
     col2.metric("공포/탐욕 지수", f"{fng_value} ({fng_class})")
     
-    now = datetime.now()
+    from datetime import timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
     weekdays = ["월", "화", "수", "목", "금", "토", "일"]
     formatted_time = now.strftime(f"%Y-%m-%d ({weekdays[now.weekday()]}) %H:%M:%S")
     col3.metric("최신 업데이트", formatted_time)
