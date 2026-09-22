@@ -180,7 +180,7 @@ def main():
             "주봉": "week",
             "월봉": "month"
         }
-        selected_interval_name = st.selectbox("분석할 타임프레임 선택", list(interval_options.keys()), index=2) # 기본 15분봉
+        selected_interval_name = st.selectbox("분석할 타임프레임 선택", list(interval_options.keys()), index=4) # 기본 4시간봉 (스윙)
         selected_interval_val = interval_options[selected_interval_name]
         
         st.divider()
