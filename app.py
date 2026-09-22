@@ -40,9 +40,9 @@ def calculate_indicators(df):
     
     return df
 
-@st.fragment(run_every="1s")
+@st.fragment(run_every="0.1s")
 def render_realtime_orderbook():
-    """1초마다 실행되어 호가창과 현재가를 실시간 업데이트하는 조각"""
+    """0.1초마다 실행되어 호가창과 현재가를 실시간 업데이트하는 조각"""
     try:
         krw_price = pyupbit.get_current_price("KRW-BTC")
         orderbooks = pyupbit.get_orderbook("KRW-BTC")
