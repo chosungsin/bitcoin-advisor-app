@@ -180,17 +180,29 @@ def main():
         for r in reason:
             st.write(f"- {r}")
 
-        st.subheader("📊 비트코인 일봉 차트 (USD 기준)")
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=df.index,
-                    open=open_series, high=high_series,
-                    low=low_series, close=close_series, 
-                    increasing_line_color='#ff4b4b', decreasing_line_color='#636efa',
-                    name='BTC/USD'))
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA20'], line=dict(color='orange', width=1.5), name='EMA 20 (단기)'))
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA50'], line=dict(color='blue', width=1.5), name='EMA 50 (중기)'))
-        fig.update_layout(xaxis_rangeslider_visible=False, height=400, template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0))
-        st.plotly_chart(fig, use_container_width=True)
+        @st.fragment(run_every="5s")
+        def render_realtime_chart():
+            st.subheader("📊 비트코인 15분봉 차트 (업비트 KRW 기준)")
+            # 업비트에서 최근 100개의 15분봉 데이터를 실시간으로 가져옴
+            df_chart = pyupbit.get_ohlcv("KRW-BTC", interval="minute15", count=100)
+            if df_chart is not None and not df_chart.empty:
+                df_chart['EMA20'] = df_chart['close'].ewm(span=20, adjust=False).mean()
+                df_chart['EMA50'] = df_chart['close'].ewm(span=50, adjust=False).mean()
+                
+                fig = go.Figure()
+                fig.add_trace(go.Candlestick(x=df_chart.index,
+                            open=df_chart['open'], high=df_chart['high'],
+                            low=df_chart['low'], close=df_chart['close'], 
+                            increasing_line_color='#ff4b4b', decreasing_line_color='#636efa',
+                            name='KRW-BTC'))
+                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['EMA20'], line=dict(color='orange', width=1.5), name='EMA 20'))
+                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['EMA50'], line=dict(color='blue', width=1.5), name='EMA 50'))
+                fig.update_layout(xaxis_rangeslider_visible=False, height=400, template="plotly_dark", margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("차트 데이터를 불러올 수 없습니다.")
+                
+        render_realtime_chart()
 
     with right_col:
         st.header("📋 실시간 호가창")
